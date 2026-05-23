@@ -46,6 +46,8 @@
   const MODE_SWITCH_RELEVANT_KEYS = Object.freeze([
     'activeFlowId',
     'contributionMode',
+    // Changing the shortcut toggles the node graph, so sidepanel/background must resync steps.
+    'emailLoginDirectImportEnabled',
     'panelMode',
     'phoneVerificationEnabled',
     'plusAccountAccessStrategy',

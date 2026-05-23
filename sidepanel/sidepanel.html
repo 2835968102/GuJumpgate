@@ -276,6 +276,19 @@
           <button id="btn-export-current-session-sub2-json" class="btn btn-ghost btn-xs" type="button">导出为SUB2 JSON</button>
         </div>
       </div>
+      <div class="data-row" id="row-email-login-direct-import">
+        <span class="data-label">邮箱登录导入</span>
+        <div class="data-inline setting-pair">
+          <!-- Shortcut mode: email verification login first, then import the current ChatGPT SESSION. -->
+          <label class="toggle-switch" for="input-email-login-direct-import-enabled" title="开启后只执行邮箱验证码登录，然后直接导入当前 ChatGPT SESSION">
+            <input type="checkbox" id="input-email-login-direct-import-enabled" />
+            <span class="toggle-switch-track" aria-hidden="true">
+              <span class="toggle-switch-thumb"></span>
+            </span>
+          </label>
+          <span class="setting-caption" id="email-login-direct-import-caption">登录后直接导入 SESSION</span>
+        </div>
+      </div>
       <div class="data-row" id="row-custom-password">
         <span class="data-label">账户密码</span>
         <div class="input-with-icon">

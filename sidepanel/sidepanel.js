@@ -58,6 +58,9 @@ const btnFetchEmail = document.getElementById('btn-fetch-email');
 const btnTogglePassword = document.getElementById('btn-toggle-password');
 const btnExportCurrentSessionCpaJson = document.getElementById('btn-export-current-session-cpa-json');
 const btnExportCurrentSessionSub2Json = document.getElementById('btn-export-current-session-sub2-json');
+const rowEmailLoginDirectImport = document.getElementById('row-email-login-direct-import');
+const inputEmailLoginDirectImportEnabled = document.getElementById('input-email-login-direct-import-enabled');
+const emailLoginDirectImportCaption = document.getElementById('email-login-direct-import-caption');
 const btnSaveSettings = document.getElementById('btn-save-settings');
 const btnStop = document.getElementById('btn-stop');
 const btnReset = document.getElementById('btn-reset');
@@ -903,6 +906,7 @@ function getStepDefinitionsForMode(plusModeEnabled = false, options = {}) {
     : (options.activeFlowId || (typeof latestState !== 'undefined' ? latestState?.activeFlowId : '') || defaultFlowId);
   const requestOptions = {
     activeFlowId: String(activeFlowId || '').trim().toLowerCase() || defaultFlowId,
+    emailLoginDirectImportEnabled: Boolean(typeof options === 'string' ? latestState?.emailLoginDirectImportEnabled : options.emailLoginDirectImportEnabled),
     plusModeEnabled,
     plusPaymentMethod: normalizePlusPaymentMethod(rawPaymentMethod),
     signupMethod: normalizeSignupMethod(rawSignupMethod),
@@ -949,6 +953,7 @@ function getWorkflowNodesForMode(plusModeEnabled = false, options = {}) {
     : (options.activeFlowId || (typeof latestState !== 'undefined' ? latestState?.activeFlowId : '') || defaultFlowId);
   const requestOptions = {
     activeFlowId: String(activeFlowId || '').trim().toLowerCase() || defaultFlowId,
+    emailLoginDirectImportEnabled: Boolean(typeof options === 'string' ? latestState?.emailLoginDirectImportEnabled : options.emailLoginDirectImportEnabled),
     plusModeEnabled,
     plusPaymentMethod: normalizePlusPaymentMethod(rawPaymentMethod),
     signupMethod: normalizeSignupMethod(rawSignupMethod),
@@ -1045,6 +1050,7 @@ function rebuildStepDefinitionState(plusModeEnabled = false, options = {}) {
   stepDefinitions = getStepDefinitionsForMode(currentPlusModeEnabled, {
     activeFlowId: options?.activeFlowId,
     panelMode: options?.panelMode,
+    emailLoginDirectImportEnabled: Boolean(options?.emailLoginDirectImportEnabled),
     plusPaymentMethod: currentPlusPaymentMethod,
     plusAccountAccessStrategy: currentPlusAccountAccessStrategy,
     signupMethod: currentSignupMethod,
@@ -1054,6 +1060,7 @@ function rebuildStepDefinitionState(plusModeEnabled = false, options = {}) {
     ? getWorkflowNodesForMode(currentPlusModeEnabled, {
       activeFlowId: options?.activeFlowId,
       panelMode: options?.panelMode,
+      emailLoginDirectImportEnabled: Boolean(options?.emailLoginDirectImportEnabled),
       plusPaymentMethod: currentPlusPaymentMethod,
       plusAccountAccessStrategy: currentPlusAccountAccessStrategy,
       signupMethod: currentSignupMethod,
@@ -4285,6 +4292,7 @@ function collectSettingsPayload() {
         : latestState?.sub2apiAccountPriority
     ),
     sub2apiDefaultProxyName: inputSub2ApiDefaultProxy.value.trim(),
+    emailLoginDirectImportEnabled: Boolean(inputEmailLoginDirectImportEnabled?.checked),
     ipProxyEnabled: getSelectedIpProxyEnabledSafe(),
     ipProxyService: selectedIpProxyService,
     ipProxyMode: currentIpProxyServiceProfile.mode,
@@ -8258,6 +8266,14 @@ function getAccountAccessStrategyUiValueForState(state = latestState) {
   return ACCOUNT_ACCESS_STRATEGY_UI_OAUTH;
 }
 
+function supportsEmailLoginDirectImportPanelMode(panelMode = '') {
+  // Keep this aligned with data/step-definitions.js; Codex2API has no SESSION import executor yet.
+  const normalized = normalizePanelMode(panelMode || DEFAULT_PANEL_MODE);
+  return normalized === LOCAL_CPA_JSON_NO_RT_PANEL_MODE
+    || normalized === 'cpa'
+    || normalized === 'sub2api';
+}
+
 function resolvePanelModeFromExportAndStrategy(exportTarget = '', strategyUiValue = '') {
   const target = getExportTargetForPanelMode(exportTarget || DEFAULT_PANEL_MODE);
   const strategy = normalizeAccountAccessStrategyUiValue(strategyUiValue);
@@ -8510,6 +8526,8 @@ function updateSignupMethodUI(options = {}) {
       signupMethod: selectedMethod,
     };
   syncStepDefinitionsForMode(stepDefinitionState.plusModeEnabled, {
+    panelMode: getSelectedPanelMode(),
+    emailLoginDirectImportEnabled: Boolean(inputEmailLoginDirectImportEnabled?.checked),
     plusPaymentMethod: getSelectedPlusPaymentMethod(latestState),
     plusAccountAccessStrategy: stepDefinitionState.plusAccountAccessStrategy,
     signupMethod: selectedMethod,
@@ -9748,9 +9766,20 @@ function syncStepDefinitionsForMode(plusModeEnabled = false, plusPaymentMethodOr
     : 'local-cpa-json-no-rt';
   const nextPanelMode = String(options.panelMode || (typeof latestState !== 'undefined' ? latestState?.panelMode : '') || '').trim().toLowerCase();
   const useNoRtWorkflow = nextPanelMode === noRtPanelMode;
+  // The shortcut is mode-gated here so unsupported targets fall back to the existing workflow safely.
+  const nextEmailLoginDirectImportEnabled = Boolean(
+    options.emailLoginDirectImportEnabled
+      ?? (typeof inputEmailLoginDirectImportEnabled !== 'undefined' && inputEmailLoginDirectImportEnabled
+        ? inputEmailLoginDirectImportEnabled.checked
+        : latestState?.emailLoginDirectImportEnabled)
+  ) && supportsEmailLoginDirectImportPanelMode(nextPanelMode);
   const currentlyUsingNoRtWorkflow = (typeof workflowNodes !== 'undefined' ? workflowNodes : [])
     .some((node) => String(node?.nodeId || '').trim() === 'local-cpa-json-export');
+  // In the shortcut workflow oauth-login becomes step 1, which distinguishes it from normal tails.
+  const currentlyUsingEmailLoginDirectImportWorkflow = (typeof workflowNodes !== 'undefined' ? workflowNodes : [])
+    .some((node) => String(node?.nodeId || '').trim() === 'oauth-login' && Number(node?.legacyStepId) === 1);
   const noRtWorkflowModeChanged = useNoRtWorkflow !== currentlyUsingNoRtWorkflow;
+  const emailLoginDirectImportModeChanged = nextEmailLoginDirectImportEnabled !== currentlyUsingEmailLoginDirectImportWorkflow;
   const nextActiveFlowId = String(
     options.activeFlowId
     || (typeof latestState !== 'undefined' ? latestState?.activeFlowId : '')
@@ -9773,6 +9802,7 @@ function syncStepDefinitionsForMode(plusModeEnabled = false, plusPaymentMethodOr
     || nextSignupMethod !== currentSignupMethod
     || nextPhoneSignupReloginAfterBindEmailEnabled !== currentPhoneSignupReloginAfterBindEmailEnabled
     || noRtWorkflowModeChanged
+    || emailLoginDirectImportModeChanged
     || paymentTitleChanged;
   if (!shouldRender) {
     return;
@@ -9780,7 +9810,8 @@ function syncStepDefinitionsForMode(plusModeEnabled = false, plusPaymentMethodOr
 
   rebuildStepDefinitionState(nextPlusModeEnabled, {
     activeFlowId: nextActiveFlowId,
-    ...(useNoRtWorkflow ? { panelMode: nextPanelMode } : {}),
+    panelMode: nextPanelMode,
+    emailLoginDirectImportEnabled: nextEmailLoginDirectImportEnabled,
     plusPaymentMethod: nextPaymentMethod,
     plusAccountAccessStrategy: nextAccountAccessStrategy,
     signupMethod: nextSignupMethod,
@@ -9806,6 +9837,7 @@ function applySettingsState(state) {
     syncStepDefinitionsForMode(stepDefinitionState.plusModeEnabled, {
       activeFlowId: state?.flowId || state?.activeFlowId,
       panelMode: state?.panelMode,
+      emailLoginDirectImportEnabled: Boolean(state?.emailLoginDirectImportEnabled),
       plusPaymentMethod: state?.plusPaymentMethod,
       plusAccountAccessStrategy: state?.plusAccountAccessStrategy,
       signupMethod: stepDefinitionState.signupMethod,
@@ -9872,6 +9904,9 @@ function applySettingsState(state) {
   syncPasswordField(state || {});
   if (typeof inputPlusModeEnabled !== 'undefined' && inputPlusModeEnabled) {
     inputPlusModeEnabled.checked = FIXED_PLUS_MODE_ENABLED;
+  }
+  if (typeof inputEmailLoginDirectImportEnabled !== 'undefined' && inputEmailLoginDirectImportEnabled) {
+    inputEmailLoginDirectImportEnabled.checked = Boolean(state?.emailLoginDirectImportEnabled);
   }
   if (typeof selectPlusPaymentMethod !== 'undefined' && selectPlusPaymentMethod) {
     selectPlusPaymentMethod.value = normalizePlusPaymentMethod(state?.plusPaymentMethod);
@@ -12171,6 +12206,22 @@ function updatePanelModeUI() {
   setRowDisplay(rowSub2ApiDefaultProxy, useSub2Api);
   setRowDisplay(rowCodex2ApiUrl, useCodex2Api);
   setRowDisplay(rowCodex2ApiAdminKey, useCodex2Api);
+  // Hide/disable the shortcut toggle where the selected target cannot consume SESSION JSON directly.
+  const emailLoginDirectImportSupported = supportsEmailLoginDirectImportPanelMode(panelMode);
+  if (rowEmailLoginDirectImport) {
+    rowEmailLoginDirectImport.style.display = emailLoginDirectImportSupported ? '' : 'none';
+  }
+  if (inputEmailLoginDirectImportEnabled) {
+    inputEmailLoginDirectImportEnabled.disabled = !emailLoginDirectImportSupported;
+    if (!emailLoginDirectImportSupported) {
+      inputEmailLoginDirectImportEnabled.checked = false;
+    }
+  }
+  if (emailLoginDirectImportCaption) {
+    emailLoginDirectImportCaption.textContent = emailLoginDirectImportSupported
+      ? '只跑邮箱验证码登录，然后直接导入当前 SESSION'
+      : '当前导出目标暂不支持直接导入';
+  }
 
   const step9Btn = document.querySelector('.step-btn[data-step-key="platform-verify"]');
   if (step9Btn) {
@@ -13726,6 +13777,7 @@ async function startAutoRunFromCurrentSettings() {
       ...(latestState || {}),
       panelMode: typeof getSelectedPanelMode === 'function' ? getSelectedPanelMode() : latestState?.panelMode,
       signupMethod: typeof getSelectedSignupMethod === 'function' ? getSelectedSignupMethod() : latestState?.signupMethod,
+      emailLoginDirectImportEnabled: Boolean(inputEmailLoginDirectImportEnabled?.checked),
       phoneVerificationEnabled: typeof inputPhoneVerificationEnabled !== 'undefined' && inputPhoneVerificationEnabled
         ? Boolean(inputPhoneVerificationEnabled.checked)
         : Boolean(latestState?.phoneVerificationEnabled),
@@ -14094,10 +14146,45 @@ inputPlusModeEnabled?.addEventListener('change', () => {
     };
   syncStepDefinitionsForMode(stepDefinitionState.plusModeEnabled, getSelectedPlusPaymentMethod(), {
     render: true,
+    panelMode: getSelectedPanelMode(),
+    emailLoginDirectImportEnabled: Boolean(inputEmailLoginDirectImportEnabled?.checked),
     signupMethod: stepDefinitionState.signupMethod,
     plusAccountAccessStrategy: stepDefinitionState.plusAccountAccessStrategy,
   });
   validateHostedCheckoutContactConfig();
+  markSettingsDirty(true);
+  saveSettings({ silent: true }).catch(() => { });
+});
+
+inputEmailLoginDirectImportEnabled?.addEventListener('change', () => {
+  const panelMode = typeof getSelectedPanelMode === 'function' ? getSelectedPanelMode() : latestState?.panelMode;
+  // Guard against stale UI state when the target is switched to an unsupported destination.
+  if (inputEmailLoginDirectImportEnabled.checked && !supportsEmailLoginDirectImportPanelMode(panelMode)) {
+    inputEmailLoginDirectImportEnabled.checked = false;
+    showToast('当前导出目标暂不支持邮箱登录后直接导入。', 'warn', 2200);
+  }
+  updatePanelModeUI();
+  const stepDefinitionState = typeof resolveStepDefinitionCapabilityState === 'function'
+    ? resolveStepDefinitionCapabilityState({
+      ...(latestState || {}),
+      panelMode,
+      emailLoginDirectImportEnabled: Boolean(inputEmailLoginDirectImportEnabled.checked),
+      signupMethod: getSelectedSignupMethod(),
+    }, {
+      signupMethod: getSelectedSignupMethod(),
+    })
+    : {
+      plusModeEnabled: Boolean(inputPlusModeEnabled?.checked),
+      signupMethod: getSelectedSignupMethod(),
+    };
+  syncStepDefinitionsForMode(stepDefinitionState.plusModeEnabled, {
+    render: true,
+    panelMode,
+    emailLoginDirectImportEnabled: Boolean(inputEmailLoginDirectImportEnabled.checked),
+    plusPaymentMethod: getSelectedPlusPaymentMethod(),
+    signupMethod: stepDefinitionState.signupMethod,
+    plusAccountAccessStrategy: stepDefinitionState.plusAccountAccessStrategy,
+  });
   markSettingsDirty(true);
   saveSettings({ silent: true }).catch(() => { });
 });
@@ -14123,6 +14210,8 @@ selectPlusPaymentMethod?.addEventListener('change', () => {
     };
   syncStepDefinitionsForMode(stepDefinitionState.plusModeEnabled, selectPlusPaymentMethod.value, {
     render: true,
+    panelMode: getSelectedPanelMode(),
+    emailLoginDirectImportEnabled: Boolean(inputEmailLoginDirectImportEnabled?.checked),
     signupMethod: stepDefinitionState.signupMethod,
     plusAccountAccessStrategy: stepDefinitionState.plusAccountAccessStrategy,
   });
@@ -14202,6 +14291,8 @@ selectPlusPaymentMethod?.addEventListener('change', () => {
     };
   syncStepDefinitionsForMode(stepDefinitionState.plusModeEnabled, {
     render: true,
+    panelMode: getSelectedPanelMode(),
+    emailLoginDirectImportEnabled: Boolean(inputEmailLoginDirectImportEnabled?.checked),
     plusPaymentMethod: selectPlusPaymentMethod.value,
     signupMethod: stepDefinitionState.signupMethod,
     plusAccountAccessStrategy: stepDefinitionState.plusAccountAccessStrategy,
@@ -14395,6 +14486,7 @@ selectPanelMode.addEventListener('change', async () => {
     syncStepDefinitionsForMode(currentPlusModeEnabled, {
       activeFlowId: latestState?.activeFlowId,
       panelMode: nextPanelMode,
+      emailLoginDirectImportEnabled: Boolean(inputEmailLoginDirectImportEnabled?.checked),
       plusPaymentMethod: currentPlusPaymentMethod,
       plusAccountAccessStrategy: nextExportSettings.plusAccountAccessStrategy,
       signupMethod: currentSignupMethod,
@@ -14445,6 +14537,7 @@ selectAccountAccessStrategy?.addEventListener('change', async () => {
     syncStepDefinitionsForMode(currentPlusModeEnabled, {
       activeFlowId: latestState?.activeFlowId,
       panelMode: nextExportSettings.panelMode,
+      emailLoginDirectImportEnabled: Boolean(inputEmailLoginDirectImportEnabled?.checked),
       plusPaymentMethod: currentPlusPaymentMethod,
       plusAccountAccessStrategy: nextExportSettings.plusAccountAccessStrategy,
       signupMethod: currentSignupMethod,
@@ -15430,6 +15523,8 @@ inputPhoneSignupReloginAfterBindEmail?.addEventListener('change', () => {
       signupMethod: getSelectedSignupMethod(),
     };
   syncStepDefinitionsForMode(stepDefinitionState.plusModeEnabled, {
+    panelMode: getSelectedPanelMode(),
+    emailLoginDirectImportEnabled: Boolean(inputEmailLoginDirectImportEnabled?.checked),
     plusPaymentMethod: getSelectedPlusPaymentMethod(latestState),
     plusAccountAccessStrategy: stepDefinitionState.plusAccountAccessStrategy,
     signupMethod: stepDefinitionState.signupMethod,
@@ -16675,6 +16770,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       if (message.payload.plusModeEnabled !== undefined && inputPlusModeEnabled) {
         inputPlusModeEnabled.checked = Boolean(message.payload.plusModeEnabled);
       }
+      if (message.payload.emailLoginDirectImportEnabled !== undefined && inputEmailLoginDirectImportEnabled) {
+        inputEmailLoginDirectImportEnabled.checked = Boolean(message.payload.emailLoginDirectImportEnabled);
+      }
       if (message.payload.plusPaymentMethod !== undefined && selectPlusPaymentMethod) {
         selectPlusPaymentMethod.value = normalizePlusPaymentMethod(message.payload.plusPaymentMethod);
       }
@@ -16701,6 +16799,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       }
       if (
         message.payload.plusModeEnabled !== undefined
+        || message.payload.emailLoginDirectImportEnabled !== undefined
         || message.payload.plusPaymentMethod !== undefined
         || message.payload.plusAccountAccessStrategy !== undefined
         || message.payload.gopayHelperPhoneMode !== undefined
@@ -16721,6 +16820,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           latestState?.plusPaymentMethod,
           {
             render: true,
+            panelMode: latestState?.panelMode,
+            emailLoginDirectImportEnabled: Boolean(latestState?.emailLoginDirectImportEnabled),
             signupMethod: stepDefinitionState.signupMethod,
             plusAccountAccessStrategy: stepDefinitionState.plusAccountAccessStrategy,
           }
