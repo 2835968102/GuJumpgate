@@ -105,6 +105,22 @@ const PLUS_PAYPAL_CPA_SESSION_STEP_DEFINITIONS = self.MultiPageStepDefinitions?.
   plusPaymentMethod: 'paypal',
   plusAccountAccessStrategy: PLUS_ACCOUNT_ACCESS_STRATEGY_CPA_CODEX_SESSION,
 }) || PLUS_PAYPAL_STEP_DEFINITIONS;
+// Prebuild the three supported direct-import registries so runtime selection stays cheap and explicit.
+const EMAIL_LOGIN_DIRECT_IMPORT_LOCAL_CPA_JSON_STEP_DEFINITIONS = self.MultiPageStepDefinitions?.getSteps?.({
+  activeFlowId: DEFAULT_ACTIVE_FLOW_ID,
+  emailLoginDirectImportEnabled: true,
+  panelMode: 'local-cpa-json-no-rt',
+}) || [];
+const EMAIL_LOGIN_DIRECT_IMPORT_CPA_STEP_DEFINITIONS = self.MultiPageStepDefinitions?.getSteps?.({
+  activeFlowId: DEFAULT_ACTIVE_FLOW_ID,
+  emailLoginDirectImportEnabled: true,
+  panelMode: 'cpa',
+}) || [];
+const EMAIL_LOGIN_DIRECT_IMPORT_SUB2API_STEP_DEFINITIONS = self.MultiPageStepDefinitions?.getSteps?.({
+  activeFlowId: DEFAULT_ACTIVE_FLOW_ID,
+  emailLoginDirectImportEnabled: true,
+  panelMode: 'sub2api',
+}) || [];
 const PLUS_PAYPAL_PHONE_STEP_DEFINITIONS = self.MultiPageStepDefinitions?.getSteps?.({
   activeFlowId: DEFAULT_ACTIVE_FLOW_ID,
   plusModeEnabled: true,
@@ -193,6 +209,9 @@ const ALL_STEP_DEFINITIONS = self.MultiPageStepDefinitions?.getAllSteps?.({
   ...PLUS_PAYPAL_STEP_DEFINITIONS,
   ...PLUS_PAYPAL_SUB2API_SESSION_STEP_DEFINITIONS,
   ...PLUS_PAYPAL_CPA_SESSION_STEP_DEFINITIONS,
+  ...EMAIL_LOGIN_DIRECT_IMPORT_LOCAL_CPA_JSON_STEP_DEFINITIONS,
+  ...EMAIL_LOGIN_DIRECT_IMPORT_CPA_STEP_DEFINITIONS,
+  ...EMAIL_LOGIN_DIRECT_IMPORT_SUB2API_STEP_DEFINITIONS,
   ...PLUS_PAYPAL_PHONE_STEP_DEFINITIONS,
   ...PLUS_PAYPAL_PHONE_BOUND_EMAIL_RELOGIN_STEP_DEFINITIONS,
   ...PLUS_GOPAY_STEP_DEFINITIONS,
@@ -748,6 +767,7 @@ function getStepDefinitionsForState(state = {}) {
     const definitions = rootScope.MultiPageStepDefinitions.getSteps({
       activeFlowId,
       panelMode,
+      emailLoginDirectImportEnabled: Boolean(state?.emailLoginDirectImportEnabled),
       plusModeEnabled: isPlusModeState(state),
       plusPaymentMethod: normalizePlusPaymentMethod(state?.plusPaymentMethod),
       plusAccountAccessStrategy: normalizePlusAccountAccessStrategyForState(state),
@@ -965,6 +985,7 @@ const PERSISTED_SETTING_DEFAULTS = {
   sub2apiGroupNames: DEFAULT_SUB2API_GROUP_NAMES,
   sub2apiAccountPriority: DEFAULT_SUB2API_ACCOUNT_PRIORITY,
   sub2apiDefaultProxyName: DEFAULT_SUB2API_PROXY_NAME,
+  emailLoginDirectImportEnabled: false,
   ipProxyEnabled: false,
   ipProxyService: DEFAULT_IP_PROXY_SERVICE,
   ipProxyMode: DEFAULT_IP_PROXY_MODE,
@@ -2914,6 +2935,8 @@ function normalizePersistentSettingValue(key, value) {
       return normalizeSub2ApiAccountPriority(value);
     case 'sub2apiDefaultProxyName':
       return String(value || '').trim();
+    case 'emailLoginDirectImportEnabled':
+      return Boolean(value);
     case 'ipProxyEnabled':
       return Boolean(value);
     case 'ipProxyService':
@@ -14163,6 +14186,9 @@ const plusPayPalPhoneStepRegistry = buildStepRegistry(PLUS_PAYPAL_PHONE_STEP_DEF
 const plusPayPalPhoneBoundEmailReloginStepRegistry = buildStepRegistry(PLUS_PAYPAL_PHONE_BOUND_EMAIL_RELOGIN_STEP_DEFINITIONS);
 const plusPayPalSub2ApiSessionStepRegistry = buildStepRegistry(PLUS_PAYPAL_SUB2API_SESSION_STEP_DEFINITIONS);
 const plusPayPalCpaSessionStepRegistry = buildStepRegistry(PLUS_PAYPAL_CPA_SESSION_STEP_DEFINITIONS);
+const emailLoginDirectImportLocalCpaJsonStepRegistry = buildStepRegistry(EMAIL_LOGIN_DIRECT_IMPORT_LOCAL_CPA_JSON_STEP_DEFINITIONS);
+const emailLoginDirectImportCpaStepRegistry = buildStepRegistry(EMAIL_LOGIN_DIRECT_IMPORT_CPA_STEP_DEFINITIONS);
+const emailLoginDirectImportSub2ApiStepRegistry = buildStepRegistry(EMAIL_LOGIN_DIRECT_IMPORT_SUB2API_STEP_DEFINITIONS);
 const plusGoPayStepRegistry = buildStepRegistry(PLUS_GOPAY_STEP_DEFINITIONS);
 const plusGoPayPhoneStepRegistry = buildStepRegistry(PLUS_GOPAY_PHONE_STEP_DEFINITIONS);
 const plusGoPayPhoneBoundEmailReloginStepRegistry = buildStepRegistry(PLUS_GOPAY_PHONE_BOUND_EMAIL_RELOGIN_STEP_DEFINITIONS);
@@ -14179,6 +14205,19 @@ function getStepRegistryForState(state = {}) {
   const activeFlowId = String(state?.activeFlowId || DEFAULT_ACTIVE_FLOW_ID).trim().toLowerCase() || DEFAULT_ACTIVE_FLOW_ID;
   if (activeFlowId !== DEFAULT_ACTIVE_FLOW_ID) {
     throw new Error(`当前尚未注册 flow=${activeFlowId} 的步骤执行器。`);
+  }
+  // When enabled, pick the lightweight login->import registry before normal Plus/local workflows.
+  if (state?.emailLoginDirectImportEnabled) {
+    const panelMode = getPanelMode(state);
+    if (panelMode === 'sub2api') {
+      return emailLoginDirectImportSub2ApiStepRegistry;
+    }
+    if (panelMode === 'cpa') {
+      return emailLoginDirectImportCpaStepRegistry;
+    }
+    if (panelMode === 'local-cpa-json-no-rt') {
+      return emailLoginDirectImportLocalCpaJsonStepRegistry;
+    }
   }
   if (getPanelMode(state) === 'local-cpa-json-no-rt') {
     return localCpaJsonNoRtStepRegistry;

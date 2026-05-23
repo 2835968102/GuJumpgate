@@ -10,6 +10,8 @@
   const PLUS_ACCOUNT_ACCESS_STRATEGY_OAUTH = 'oauth';
   const PLUS_ACCOUNT_ACCESS_STRATEGY_SUB2API_CODEX_SESSION = 'sub2api_codex_session';
   const PLUS_ACCOUNT_ACCESS_STRATEGY_CPA_CODEX_SESSION = 'cpa_codex_session';
+  // Direct import mode reuses OAuth login, then imports the live ChatGPT session without signup/Plus steps.
+  const EMAIL_LOGIN_DIRECT_IMPORT_PANEL_MODES = ['local-cpa-json-no-rt', 'cpa', 'sub2api'];
   const SIGNUP_METHOD_EMAIL = 'email';
   const SIGNUP_METHOD_PHONE = 'phone';
 
@@ -161,6 +163,47 @@
       return createCpaSessionImportTail;
     }
     return null;
+  }
+
+  function isEmailLoginDirectImportEnabled(options = {}) {
+    return Boolean(options?.emailLoginDirectImportEnabled);
+  }
+
+  function shouldUseEmailLoginDirectImport(options = {}) {
+    if (!isEmailLoginDirectImportEnabled(options)) {
+      return false;
+    }
+    // Only enable this shortcut where we already have a background SESSION import/export executor.
+    return EMAIL_LOGIN_DIRECT_IMPORT_PANEL_MODES.includes(String(options?.panelMode || '').trim().toLowerCase());
+  }
+
+  function createEmailLoginDirectImportSteps(options = {}) {
+    const panelMode = String(options?.panelMode || '').trim().toLowerCase();
+    // The first three nodes complete email-code login; the final node is target-specific import.
+    const importStep = (() => {
+      if (panelMode === 'sub2api') {
+        return createSub2ApiSessionImportTail(4, 40)[0];
+      }
+      if (panelMode === 'cpa') {
+        return createCpaSessionImportTail(4, 40)[0];
+      }
+      if (panelMode === LOCAL_CPA_JSON_NO_RT_PANEL_MODE) {
+        return {
+          ...LOCAL_CPA_JSON_NO_RT_EXPORT_STEP_DEFINITION,
+          id: 4,
+          order: 40,
+        };
+      }
+      return null;
+    })();
+
+    const steps = [
+      { id: 1, order: 10, key: 'oauth-login', title: '邮箱验证码登录', sourceId: 'openai-auth', driverId: 'content/signup-page', command: 'oauth-login' },
+      { id: 2, order: 20, key: 'fetch-login-code', title: '获取登录验证码', sourceId: 'openai-auth', driverId: 'content/signup-page', command: 'submit-verification-code', mailRuleId: 'openai-login-code' },
+      { id: 3, order: 30, key: 'confirm-oauth', title: '自动确认 OAuth', sourceId: 'openai-auth', driverId: 'content/signup-page', command: 'confirm-oauth' },
+    ];
+
+    return importStep ? [...steps, importStep] : steps;
   }
 
   function createOpenAiSteps(prefixSteps, startId, startOrder, signupMethod = SIGNUP_METHOD_EMAIL, options = {}) {
@@ -345,6 +388,10 @@
     const signupMethod = getResolvedSignupMethod(options);
     const reloginAfterBindEmail = signupMethod === SIGNUP_METHOD_PHONE
       && isPhoneSignupReloginAfterBindEmailEnabled(options);
+    // This mode intentionally bypasses registration, checkout, and platform callback steps.
+    if (shouldUseEmailLoginDirectImport(options)) {
+      return createEmailLoginDirectImportSteps(options);
+    }
     if (panelMode === LOCAL_CPA_JSON_NO_RT_PANEL_MODE) {
       return [
         ...PLUS_PAYPAL_HOSTED_CHECKOUT_PREFIX_STEP_DEFINITIONS,
@@ -473,6 +520,9 @@
           ...PLUS_GPC_CPA_SESSION_STEP_DEFINITIONS,
           ...PLUS_GPC_PHONE_STEP_DEFINITIONS,
           ...PLUS_GPC_PHONE_BOUND_EMAIL_RELOGIN_STEP_DEFINITIONS,
+          ...createEmailLoginDirectImportSteps({ panelMode: LOCAL_CPA_JSON_NO_RT_PANEL_MODE }),
+          ...createEmailLoginDirectImportSteps({ panelMode: 'cpa' }),
+          ...createEmailLoginDirectImportSteps({ panelMode: 'sub2api' }),
         ]) {
           keyed.set(`${step.id}:${step.key}`, step);
         }
