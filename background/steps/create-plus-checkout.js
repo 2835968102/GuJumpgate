@@ -24,6 +24,9 @@
   const HOSTED_CHECKOUT_VERIFICATION_POLL_ATTEMPTS = 12;
   const HOSTED_CHECKOUT_VERIFICATION_POLL_INTERVAL_MS = 5000;
   const HOSTED_CHECKOUT_VERIFICATION_INVALID_RESEND_DELAY_MS = 3000;
+  // If PayPal stays on the verification step after a submitted code, treat it as a stuck validation
+  // and trigger one resend/re-fill fallback even when no explicit invalid-code banner is detected.
+  const HOSTED_CHECKOUT_VERIFICATION_SUBMIT_WAIT_BEFORE_RESEND_MS = 10000;
   const HOSTED_CHECKOUT_VERIFICATION_POPUP_DELAY_MIN_SECONDS = 0;
   const HOSTED_CHECKOUT_VERIFICATION_POPUP_DELAY_MAX_SECONDS = 60;
   const HOSTED_CHECKOUT_VERIFICATION_POPUP_DELAY_DEFAULT_SECONDS = 20;
@@ -1616,6 +1619,7 @@ function FindProxyForURL(url, host) {
       const startedAt = Date.now();
       let hostedVerificationResendAttempts = 0;
       let hostedVerificationSubmitted = false;
+      let hostedVerificationSubmittedAt = 0;
       let loggedWaitingForHostedVerificationResult = false;
       while (Date.now() - startedAt < HOSTED_CHECKOUT_PAYPAL_LOOP_TIMEOUT_MS) {
         throwIfStopped();
@@ -1640,6 +1644,7 @@ function FindProxyForURL(url, host) {
 
         if (isPayPalHermesUrl(currentUrl)) {
           hostedVerificationSubmitted = false;
+          hostedVerificationSubmittedAt = 0;
           loggedWaitingForHostedVerificationResult = false;
           await addLog(`步骤 6：检测到 PayPal Hermes 复核页（${currentUrl}），按油猴脚本方式直接等待并点击 Agree and Continue...`, 'info');
           await runHostedCheckoutPayPalStep(tabId, {
@@ -1655,6 +1660,7 @@ function FindProxyForURL(url, host) {
           return;
         }
 
+        // Preferred path: PayPal explicitly reports the code as invalid, so we resend immediately.
         if (
           pageState.hostedStage === 'verification'
           && pageState.verificationInputsVisible
@@ -1668,6 +1674,7 @@ function FindProxyForURL(url, host) {
           hostedVerificationResendAttempts += 1;
           await resendHostedCheckoutVerificationCodeAndRefill(tabId, guestProfile, hostedVerificationResendAttempts);
           hostedVerificationSubmitted = true;
+          hostedVerificationSubmittedAt = Date.now();
           loggedWaitingForHostedVerificationResult = false;
           await sleepWithStop(1000);
           continue;
@@ -1675,6 +1682,27 @@ function FindProxyForURL(url, host) {
 
         if (pageState.hostedStage === 'verification' && pageState.verificationInputsVisible) {
           if (hostedVerificationSubmitted) {
+            const waitingMs = hostedVerificationSubmittedAt > 0
+              ? Date.now() - hostedVerificationSubmittedAt
+              : 0;
+            if (
+              waitingMs >= HOSTED_CHECKOUT_VERIFICATION_SUBMIT_WAIT_BEFORE_RESEND_MS
+              && hostedVerificationResendAttempts < HOSTED_CHECKOUT_VERIFICATION_RESEND_MAX_ATTEMPTS
+            ) {
+              // Fallback path: some verification pages never surface an invalid-code hint and only
+              // recover after a manual resend, so we proactively retry once after waiting here.
+              hostedVerificationResendAttempts += 1;
+              await addLog(
+                `步骤 6：PayPal 验证码提交后已停留验证页 ${Math.ceil(waitingMs / 1000)} 秒，仍未进入下一阶段；准备自动点击 Resend 重新获取验证码（${hostedVerificationResendAttempts}/${HOSTED_CHECKOUT_VERIFICATION_RESEND_MAX_ATTEMPTS}）。`,
+                'warn'
+              );
+              await resendHostedCheckoutVerificationCodeAndRefill(tabId, guestProfile, hostedVerificationResendAttempts);
+              hostedVerificationSubmitted = true;
+              hostedVerificationSubmittedAt = Date.now();
+              loggedWaitingForHostedVerificationResult = false;
+              await sleepWithStop(1000);
+              continue;
+            }
             if (!loggedWaitingForHostedVerificationResult) {
               loggedWaitingForHostedVerificationResult = true;
               await addLog('步骤 6：PayPal 验证码已提交，正在等待校验结果或错误提示...', 'info');
@@ -1690,6 +1718,7 @@ function FindProxyForURL(url, host) {
             verificationCode,
           });
           hostedVerificationSubmitted = true;
+          hostedVerificationSubmittedAt = Date.now();
           loggedWaitingForHostedVerificationResult = false;
           await sleepWithStop(1000);
           continue;
@@ -1697,6 +1726,7 @@ function FindProxyForURL(url, host) {
 
         if (pageState.hostedStage === 'account_create_email' || pageState.hostedAccountCreateEmail) {
           hostedVerificationSubmitted = false;
+          hostedVerificationSubmittedAt = 0;
           loggedWaitingForHostedVerificationResult = false;
           await addLog('步骤 6：检测到 PayPal 创建账户邮箱页，正在填写邮箱并继续付款...', 'info');
           await runHostedCheckoutPayPalStep(tabId, {
@@ -1708,6 +1738,7 @@ function FindProxyForURL(url, host) {
 
         if (pageState.hostedStage === 'pay_login') {
           hostedVerificationSubmitted = false;
+          hostedVerificationSubmittedAt = 0;
           loggedWaitingForHostedVerificationResult = false;
           await addLog('步骤 6：检测到 PayPal hosted checkout 登录页，正在填写邮箱并继续...', 'info');
           await runHostedCheckoutPayPalStep(tabId, {
@@ -1720,6 +1751,7 @@ function FindProxyForURL(url, host) {
 
         if (pageState.hostedStage === 'guest_checkout') {
           hostedVerificationSubmitted = false;
+          hostedVerificationSubmittedAt = 0;
           loggedWaitingForHostedVerificationResult = false;
           const runtimeConfig = await getHostedCheckoutRuntimeConfig({
             ensureCurrentSmsEntry: true,
@@ -1741,6 +1773,7 @@ function FindProxyForURL(url, host) {
 
         if (pageState.hostedStage === 'review_consent') {
           hostedVerificationSubmitted = false;
+          hostedVerificationSubmittedAt = 0;
           loggedWaitingForHostedVerificationResult = false;
           await addLog('步骤 6：检测到 PayPal hosted checkout 账单确认页，正在点击继续...', 'info');
           await runHostedCheckoutPayPalStep(tabId, {
